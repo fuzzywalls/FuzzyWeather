@@ -16,3 +16,6 @@ The instructable linked above will give a basic outline of how to connect the co
 Simply edit the code to contain your Darksky api key and the lat/long coordinates of the weather you want to display. Enjoy!
 
 
+![front](./img/front.png)
+
+![back](./img/back.png)
