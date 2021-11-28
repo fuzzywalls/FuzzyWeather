@@ -2,7 +2,7 @@
 #include <PxMatrix.h>
 #include <Arduino.h>
 #include <WiFi.h>
-#include <HTTPClient.h>
+#include <ArduinoHttpClient.h>
 #include <NTPClient.h>
 #include <string>
 
@@ -19,12 +19,12 @@
 ///////////////////////////////////////////////
 char *WIFI_ACCESS_POINT = "";
 char *WIFI_PASSWORD = "";
-String API_KEY = "";  // DarkSky API key
-String LAT_LONG = "XX.XXXX,YY.YYYY";  // Lat/Long of where you want the weather to come from
+String API_KEY = "";  // OpenWeather API key
+String LAT = "";
+String LONG = "";
 
 // Change this to whatever you want the splash message to be. 
-// A requirement of using the DarkSky API is to display the "powered by" message
-String splashMessage = "FuzzyWeather: Powered by Dark Sky";
+String splashMessage = "FuzzyWeather: Powered by OpenWeather";
 
 ////////////////////////////////////////////////
 // Globals
@@ -37,6 +37,7 @@ unsigned long elapsedtime;
 String weatherData;
 int marquee_index = 0;
 uint8_t display_draw_time=0; 
+int isNight=0;
 
 ////////////////////////////////////////////////
 // Initialize display
@@ -140,17 +141,20 @@ void connectWifi() {
  * Check the current time versus sunset. Used to dim the display.
  **********************************************************************/
 void checkDayNight() {
-    unsigned long sunrise = weatherJson["daily"]["data"][0]["sunriseTime"].as<unsigned long>();
-    unsigned long sunset = weatherJson["daily"]["data"][0]["sunsetTime"].as<unsigned long>();
+    unsigned long sunrise = weatherJson["daily"][0]["sunrise"].as<unsigned long>();
+    unsigned long sunset = weatherJson["daily"][0]["sunset"].as<unsigned long>();
     unsigned long currTime = timeClient.getEpochTime();
 
     if (currTime < sunrise) {
+        isNight=1;
         display.setBrightness(50);
     }
     else if (currTime < sunset) {
+        isNight=0;
         display.setBrightness(255);
     }
     else {
+        isNight=1;
         display.setBrightness(50);
     }
 }
@@ -162,7 +166,7 @@ void checkDayNight() {
  **********************************************************************/
 void getWeatherData(){                
     HTTPClient http;
-    String endpoint = "https://api.darksky.net/forecast/" + API_KEY + "/" + LAT_LONG + "?exclude=hourly,minutely,flags,alerts";
+    String endpoint = "https://api.openweathermap.org/data/2.5/onecall?units=imperial&exclude=hourly,minutely,alerts&lat=" + LAT + "&lon=" + LONG + "&appid=" + API_KEY;
     Serial.println(endpoint);
     http.begin(endpoint);
     
@@ -197,7 +201,7 @@ void splash_weather(int index) {
     }
     else if (index < -79) {
         drawSun();
-        drawClouds();
+        drawClouds(100);
     }
     else if (index < -43) {
         drawMoon();
@@ -209,7 +213,7 @@ void splash_weather(int index) {
         drawWind();
     }
     else if (index < 47) {
-        drawClouds();
+        drawClouds(10);
     }
     else {
         thunderStorm();
@@ -301,8 +305,6 @@ void drawPrecip(int amount, uint16_t color) {
     for (int n=0; n < amount; n++){
         display.drawPixel(random(0,32), random(0,24), color);
     }
-
-    drawClouds();
 }
 
 /**********************************************************************
@@ -493,13 +495,13 @@ void drawMoon() {
  * 
  * Draw clouds at random locations in the sky. 
  **********************************************************************/
-void drawClouds() {
+void drawClouds(int percentage) {
     static bool init = false;
     static int call_count = 0;
     static int c1_x, c2_x, c3_x, c4_x, c5_x;
     static int c1_r, c2_r, c3_r, c4_r, c5_r;
 
-    if (call_count == 100 || !init) {
+    if (call_count == percentage || !init) {
         c1_x = random(0, 5);
         c2_x = random(5, 10);
         c3_x = random(10, 15);
@@ -528,47 +530,36 @@ void drawClouds() {
  * 
  * Draw weather based on values in the returned weather array. 
  **********************************************************************/
-void drawWeather(String weatherValue) {
-    if (weatherValue == "thunderstorm") {
-        //thunderstorm
+void drawWeather(int weatherValue) {
+    // Thunderstorm
+    if (250 > weatherValue && weatherValue >= 200) {
         thunderStorm();
     }
-    else if (weatherValue == "rain") {
-        // temporarily make thunderStorm, because its nice, but the API doesnt support it. 
-        thunderStorm();
-        //drawPrecip(100, blue);
+    // Drizzle
+    else if (350 > weatherValue && weatherValue >= 300) {
+        drawPrecip(20, blue);
     }
-    else if (weatherValue == "snow") {
+    else if (550 > weatherValue && weatherValue >= 500) {
+        drawPrecip(100, blue);
+    }
+    else if (650 > weatherValue && weatherValue >= 600) {
         drawPrecip(25, gray);
     }
-    else if (weatherValue == "cloudy") {
-        drawClouds();
+    else if (750 > weatherValue && weatherValue >= 700) {
+        drawFog();
     }
-    else if (weatherValue == "clear-day") {
+    else if (weatherValue == 800 && !isNight) {
         drawSun();
     }
-    else if (weatherValue == "clear-night") {
+    else if (weatherValue == 800 && isNight) {
         drawMoon();
     }
-    else if (weatherValue == "partly-cloudy-day") {
-        drawSun();
+    else if (810 > weatherValue && weatherValue > 800) {
         drawClouds();
     }
-    else if (weatherValue == "partly-cloudy-night") {
-        drawMoon();
-        drawClouds();
-    }
-    else if (weatherValue == "sleet") {
-        drawPrecip(25, gray);
-        drawPrecip(25, blue);
-        drawClouds();
-    }
-    else if (weatherValue == "fog") {
-        drawFog();  
-    }
-    else if (weatherValue == "wind") {
-        drawWind(); 
-    }
+   // else if (weatherValue == "wind") {
+   //     drawWind(); 
+    //}
 }
 
 /**********************************************************************
@@ -577,23 +568,25 @@ void drawWeather(String weatherValue) {
  * Display the weather most recently retrieved from openweathermap.org
  **********************************************************************/
  void displayWeather() {
-    String weather_type = weatherJson["currently"]["icon"];
-    float tempFaren = weatherJson["currently"]["temperature"].as<float>();
-    float feelsLike = weatherJson["currently"]["apparentTemperature"].as<float>();
-    float highTemp = weatherJson["daily"]["data"][0]["temperatureHigh"].as<float>();
-    float lowTemp = weatherJson["daily"]["data"][0]["temperatureLow"].as<float>();
-    float humidity = weatherJson["currently"]["humidity"].as<float>();
-    float windSpeed = weatherJson["daily"]["data"][0]["windSpeed"];
-    String windDirection = convertWindDirection(weatherJson["daily"]["data"][0]["windBearing"]);
-    float cloudPercentage = weatherJson["currently"]["cloudCover"].as<float>();
-    String summary = weatherJson["daily"]["data"][0]["summary"];
-    float chanceOfRain = weatherJson["daily"]["data"][0]["precipProbability"];
+    JsonArray& weather = weatherJson["daily"][0]["weather"];
+    float tempFaren = weatherJson["current"]["temp"].as<float>();
+    float feelsLike = weatherJson["current"]["feels_like"].as<float>();
+    float highTemp = weatherJson["daily"][0]["temp"]["max"].as<float>();
+    float lowTemp = weatherJson["daily"][0]["temp"]["min"].as<float>();
+    float humidity = weatherJson["current"]["humidity"].as<float>();
+    float windSpeed = weatherJson["daily"][0]["wind_speed"];
+    String windDirection = convertWindDirection(weatherJson["daily"][0]["wind_deg"]);
+    float cloudPercentage = weatherJson["current"]["clouds"].as<float>();
         
-    String message = summary + " Feels Like:" + String(feelsLike, 0) + "F Precip Chance:" + String(chanceOfRain * 100, 0) + "% Wind:" + windDirection + String(windSpeed,0) + "mph Cloud Cover:" + String(cloudPercentage * 100, 0) + "%";
+    String message = " Feels Like:" + String(feelsLike, 0) + "F Wind:" + windDirection + String(windSpeed,0) + "mph Cloud Cover:" + String(cloudPercentage, 0) + "%";
     int msg_end = -6*message.length();
     for(marquee_index = PxMATRIX_MAX_WIDTH; marquee_index > msg_end; marquee_index--){
         display.clearDisplay();
-        drawWeather(weather_type);
+        for(int i=0; i<weather.size(); i++) {
+          JsonObject& currWeather = weather_id[i];
+          drawWeather(currWeather["id"]);
+        }
+        drawClouds((int)cloudPercentage);
         display.setCursor(46,0);
         display.printf("%2.00fF", tempFaren);
         display.setCursor(34, 8);
